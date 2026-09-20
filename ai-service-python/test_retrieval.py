@@ -20,7 +20,7 @@ def retrieve_chunks(query):
         FROM document_chunks
         WHERE document_id = %s
         ORDER BY embedding <=> %s::vector
-        LIMIT 5
+        LIMIT 1
         """,
         (
             1,

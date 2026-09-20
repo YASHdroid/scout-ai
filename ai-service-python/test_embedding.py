@@ -22,7 +22,7 @@ def chunk_text(text, chunk_size=1000):
 
 
 chunks = chunk_text(text)
-
+chunks = [chunk.replace("\x00", "") for chunk in chunks]
 print("Number of chunks:", len(chunks))
 
 
@@ -42,8 +42,10 @@ for i, chunk in enumerate(chunks):
     cursor.execute(
         """
         INSERT INTO document_chunks
-        (document_id, chunk_index, chunk_text, embedding)
-        VALUES (%s, %s, %s, %s::vector)
+(document_id, chunk_index, chunk_text, embedding)
+VALUES (%s, %s, %s, %s::vector)
+ON CONFLICT (document_id, chunk_index)
+DO NOTHING
         """,
         (
             1,
