@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+python-dotenv
+psycopg2-binary
+sentence-transformers
+groq
+tavily-python
+pymupdf
+python-multipart
+pytest
