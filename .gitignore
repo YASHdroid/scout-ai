@@ -17,3 +17,14 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+# Generated Scout research outputs
+ai-service-python/research_runs/
+ai-service-python/research_analysis.json
+ai-service-python/research_synthesis.json
+ai-service-python/research_verification.json
+
+# Generated Scout research outputs
+ai-service-python/research_runs/
+ai-service-python/research_analysis.json
+ai-service-python/research_synthesis.json
+ai-service-python/research_verification.json

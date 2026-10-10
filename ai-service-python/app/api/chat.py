@@ -1,12 +1,15 @@
 from fastapi import APIRouter
 
 from app.models.schemas import ChatRequest
+
 from app.services.conversation_service import (
     get_conversation_document,
     get_recent_messages,
     save_message
 )
+
 from app.rag.pipeline import run_chat
+
 
 router = APIRouter()
 
@@ -14,11 +17,12 @@ router = APIRouter()
 @router.post("/chat")
 async def chat(request: ChatRequest):
 
-    document_id = get_conversation_document(
+    document_id, conversation_exists = get_conversation_document(
         request.conversation_id
     )
 
-    if document_id is None:
+    if not conversation_exists:
+
         return {
             "error": "Conversation not found"
         }

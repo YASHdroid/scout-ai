@@ -1,6 +1,7 @@
 import express from "express";
 import axios from "axios";
-
+import authRouter from "./routes/auth";
+import { authenticate, AuthRequest } from "./middleware/authMiddleware";
 const app = express();
 
 const PORT = 3000;
@@ -8,11 +9,8 @@ const PYTHON_URL = "http://localhost:8000";
 
 app.use(express.json());
 
-app.get("/health", (req, res) => {
-  res.json({
-    status: "Node backend is running"
-  });
-});
+
+app.use("/api/auth", authRouter);
 
 app.post("/api/research", async (req, res) => {
   try {

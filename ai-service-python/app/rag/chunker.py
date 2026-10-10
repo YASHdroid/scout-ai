@@ -1,4 +1,4 @@
-def chunk_text(text: str, chunk_size: int = 1000):
+def chunk_text(text: str, chunk_size: int = 1000 , overlap=200):
     chunks = []
 
     for i in range(0, len(text), chunk_size):

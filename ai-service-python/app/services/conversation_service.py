@@ -1,12 +1,15 @@
 from app.core.database import get_connection
 
+
 def create_conversation(document_id: int):
+
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute(
         """
-        INSERT INTO conversations (document_id)
+        INSERT INTO conversations
+        (document_id)
         VALUES (%s)
         RETURNING id
         """,
@@ -16,12 +19,15 @@ def create_conversation(document_id: int):
     conversation_id = cursor.fetchone()[0]
 
     conn.commit()
+
     cursor.close()
     conn.close()
 
     return conversation_id
 
+
 def get_conversation_document(conversation_id: int):
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -39,9 +45,18 @@ def get_conversation_document(conversation_id: int):
     cursor.close()
     conn.close()
 
-    return row[0] if row else None
+    if row is None:
+        return None, False
 
-def save_message(conversation_id: int, role: str, content: str):
+    return row[0], True
+
+
+def save_message(
+    conversation_id: int,
+    role: str,
+    content: str
+):
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -51,14 +66,24 @@ def save_message(conversation_id: int, role: str, content: str):
         (conversation_id, role, content)
         VALUES (%s, %s, %s)
         """,
-        (conversation_id, role, content)
+        (
+            conversation_id,
+            role,
+            content
+        )
     )
 
     conn.commit()
+
     cursor.close()
     conn.close()
 
-def get_recent_messages(conversation_id: int, limit: int = 10):
+
+def get_recent_messages(
+    conversation_id: int,
+    limit: int = 10
+):
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -70,7 +95,10 @@ def get_recent_messages(conversation_id: int, limit: int = 10):
         ORDER BY id DESC
         LIMIT %s
         """,
-        (conversation_id, limit)
+        (
+            conversation_id,
+            limit
+        )
     )
 
     rows = cursor.fetchall()
