@@ -8,7 +8,7 @@ const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:3001",
+    origin: "http://localhost:3000",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
@@ -16,7 +16,7 @@ app.use(
 
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = 3001;
 const PYTHON_URL = "http://localhost:8000";
 
 

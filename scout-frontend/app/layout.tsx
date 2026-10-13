@@ -1,4 +1,4 @@
-
+import GoogleProvider from "../components/GoogleProvider";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
@@ -38,11 +38,12 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} ${scoutWordmark.variable} h-full antialiased`}
-    >
-      <body className="flex min-h-full flex-col">{children}</body>
+    <html lang="en">
+      <body className={`${geistSans.variable} antialiased`}>
+        <GoogleProvider>
+          {children}
+        </GoogleProvider>
+      </body>
     </html>
   );
 }

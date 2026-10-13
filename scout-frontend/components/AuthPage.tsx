@@ -1,10 +1,13 @@
-
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion, useReducedMotion } from "motion/react";
+import {
+  GoogleLogin,
+  type CredentialResponse,
+} from "@react-oauth/google";
 import {
   ArrowLeft,
   ArrowRight,
@@ -46,9 +49,30 @@ export default function AuthPage({ mode }: AuthPageProps) {
   const [statusType, setStatusType] = useState<"error" | "success">(
     "error"
   );
+  const [googleButtonWidth, setGoogleButtonWidth] = useState(280);
 
-  const inputClass =
-    "w-full min-w-0 bg-transparent py-3.5 pl-3 pr-3 text-sm text-white outline-none placeholder:text-white/30";
+  useEffect(() => {
+    const updateWidth = () => {
+      setGoogleButtonWidth(
+        Math.min(400, Math.max(200, window.innerWidth - 120))
+      );
+    };
+
+    updateWidth();
+    window.addEventListener("resize", updateWidth);
+
+    return () => {
+      window.removeEventListener("resize", updateWidth);
+    };
+  }, []);
+
+  const inputClass = `w-full min-w-0 bg-transparent ${
+    isSignup ? "py-2.5" : "py-3"
+  } pl-3 pr-3 text-sm text-white outline-none placeholder:text-white/30`;
+
+  const labelClass = `${
+    isSignup ? "mb-1.5" : "mb-2"
+  } block text-xs font-medium text-white/80`;
 
   const inputWrapperClass =
     "flex items-center rounded-xl border border-white/10 bg-[#0B121C]/70 transition duration-300 hover:border-white/20 focus-within:border-cyan-300/60 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.06)]";
@@ -153,6 +177,68 @@ export default function AuthPage({ mode }: AuthPageProps) {
     }
   }
 
+  async function handleGoogleSuccess(
+    googleResponse: CredentialResponse
+  ) {
+    const credential = googleResponse.credential;
+
+    if (!credential) {
+      setStatusType("error");
+      setStatus("Google sign-in failed. Please try again.");
+      return;
+    }
+
+    setLoading(true);
+    setStatus("");
+
+    try {
+      const baseURL = (
+        process.env.NEXT_PUBLIC_API_URL ||
+        "http://localhost:3000/api"
+      ).replace(/\/+$/, "");
+
+      const response = await fetch(`${baseURL}/auth/google`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ credential }),
+      });
+
+      const result = (await response
+        .json()
+        .catch(() => ({}))) as AuthResponse;
+
+      if (!response.ok) {
+        setStatusType("error");
+        setStatus(
+          result.error || "Google sign-in failed. Please try again."
+        );
+        return;
+      }
+
+      const token =
+        result.token ||
+        result.accessToken ||
+        result.user?.token;
+
+      if (!token) {
+        setStatusType("error");
+        setStatus("Authentication token was not returned.");
+        return;
+      }
+
+      sessionStorage.setItem("scout_token", token);
+      router.push("/research");
+    } catch (error) {
+      console.error("Google sign-in failed:", error);
+      setStatusType("error");
+      setStatus("Could not connect to Scout's backend.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function handleForgotPassword() {
     setStatusType("error");
     setStatus("Password recovery has not been implemented yet.");
@@ -164,7 +250,7 @@ export default function AuthPage({ mode }: AuthPageProps) {
 
       <main className="relative z-10 flex min-h-screen flex-col text-[#F4F7FB]">
         {/* Header */}
-        <header className="relative z-10 mx-auto flex w-full max-w-7xl items-center justify-between px-6 py-6 md:px-10">
+        <header className="absolute inset-x-0 top-0 z-20 flex w-full items-center justify-between px-6 py-5 md:px-10">
           <Link href="/" className="flex items-center gap-2.5">
             <Orbit
               className="h-7 w-7 text-cyan-300"
@@ -186,7 +272,7 @@ export default function AuthPage({ mode }: AuthPageProps) {
         </header>
 
         {/* Main layout */}
-        <div className="mx-auto grid w-full max-w-6xl flex-1 items-center gap-12 px-6 pb-16 pt-8 lg:grid-cols-[1fr_0.85fr] lg:gap-20 lg:px-10">
+        <div className="mx-auto grid w-full max-w-6xl flex-1 items-center gap-12 px-6 pb-6 pt-16 lg:grid-cols-[1fr_0.85fr] lg:gap-20 lg:px-10">
           {/* Left editorial section */}
           <motion.section
             initial={reduceMotion ? false : { opacity: 0, y: 20 }}
@@ -247,42 +333,45 @@ export default function AuthPage({ mode }: AuthPageProps) {
             className="mx-auto w-full max-w-md"
           >
             {/* Transparent card */}
-            <div className="relative overflow-hidden rounded-2xl border border-white/[0.12] bg-transparent p-6 sm:p-9">
+            <div className={`relative overflow-hidden rounded-2xl border border-white/[0.12] bg-transparent p-6 ${
+                isSignup ? "sm:p-6" : "sm:p-8"
+              }`}>
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute left-8 right-8 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/70 to-transparent"
               />
 
               {/* Form heading */}
-              <div className="mb-9">
-                <div className="mb-7 flex h-11 w-11 items-center justify-center rounded-xl border border-cyan-300/25 bg-cyan-300/[0.07]">
-                  <Orbit className="h-5 w-5 text-cyan-300" />
+              <div className={isSignup ? "mb-4" : "mb-6"}>
+                <div className="flex items-center gap-4">
+                  {/* Logo icon */}
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-cyan-300/25 bg-cyan-300/[0.07]">
+                    <Orbit className="h-6 w-6 text-cyan-300" />
+                  </div>
+
+                  {/* Heading beside logo */}
+                  <div className="min-w-0">
+                    <h2 className="text-2xl font-medium leading-tight tracking-[-0.045em] sm:text-3xl">
+                      {isSignup ? (
+                        <>
+                          Create your{" "}
+                          <span className="font-serif font-normal italic text-cyan-300">
+                            account.
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          Welcome{" "}
+                          <span className="font-serif font-normal italic text-cyan-300">
+                            back.
+                          </span>
+                        </>
+                      )}
+                    </h2>
+                  </div>
                 </div>
 
-                {isSignup && (
-                  <p className="mb-3 text-[10px] font-medium tracking-[0.24em] text-cyan-300/80">
-                    BEGIN YOUR JOURNEY
-                  </p>
-                )}
-
-                <h2 className="text-3xl font-medium leading-tight tracking-[-0.045em] sm:text-4xl">
-                  {isSignup ? (
-                    <>
-                      Create your{" "}
-                      <span className="font-serif font-normal italic text-cyan-300">
-                        account.
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      Welcome{" "}
-                      <span className="font-serif font-normal italic text-cyan-300">
-                        back.
-                      </span>
-                    </>
-                  )}
-                </h2>
-
+                {/* Description below */}
                 <p className="mt-3 text-sm leading-6 text-white/65">
                   {isSignup
                     ? "One account. More room to explore."
@@ -291,12 +380,12 @@ export default function AuthPage({ mode }: AuthPageProps) {
               </div>
 
               {/* Form */}
-              <form onSubmit={handleSubmit} className="space-y-5">
+              <form onSubmit={handleSubmit} className={isSignup ? "space-y-3" : "space-y-4"}>
                 {isSignup && (
                   <div>
                     <label
                       htmlFor="name"
-                      className="mb-2 block text-xs font-medium text-white/80"
+                      className={labelClass}
                     >
                       Your name
                     </label>
@@ -325,7 +414,7 @@ export default function AuthPage({ mode }: AuthPageProps) {
                 <div>
                   <label
                     htmlFor="email"
-                    className="mb-2 block text-xs font-medium text-white/80"
+                    className={labelClass}
                   >
                     Email address
                   </label>
@@ -351,23 +440,13 @@ export default function AuthPage({ mode }: AuthPageProps) {
 
                 {/* Password */}
                 <div>
-                  <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className={`${isSignup ? "mb-1.5" : "mb-2"} flex items-center justify-between gap-3`}>
                     <label
                       htmlFor="password"
                       className="text-xs font-medium text-white/80"
                     >
                       Password
                     </label>
-
-                    {!isSignup && (
-                      <button
-                        type="button"
-                        onClick={handleForgotPassword}
-                        className="text-xs text-cyan-300/85 transition hover:text-cyan-200"
-                      >
-                        Forgot password?
-                      </button>
-                    )}
                   </div>
 
                   <div className={inputWrapperClass}>
@@ -415,7 +494,7 @@ export default function AuthPage({ mode }: AuthPageProps) {
                   <div>
                     <label
                       htmlFor="confirmPassword"
-                      className="mb-2 block text-xs font-medium text-white/80"
+                      className={labelClass}
                     >
                       Confirm password
                     </label>
@@ -478,7 +557,7 @@ export default function AuthPage({ mode }: AuthPageProps) {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="group flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-300 px-5 py-4 text-sm font-semibold text-[#061019] shadow-[0_0_24px_rgba(34,211,238,0.12)] transition duration-300 hover:-translate-y-0.5 hover:bg-cyan-200 hover:shadow-[0_0_32px_rgba(34,211,238,0.22)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="group flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-300 px-5 py-3.5 text-sm font-semibold text-[#061019] shadow-[0_0_24px_rgba(34,211,238,0.12)] transition duration-300 hover:-translate-y-0.5 hover:bg-cyan-200 hover:shadow-[0_0_32px_rgba(34,211,238,0.22)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading
                     ? "Please wait..."
@@ -495,8 +574,42 @@ export default function AuthPage({ mode }: AuthPageProps) {
                 </button>
               </form>
 
+              {/* Google sign-in option */}
+              <div className="mt-5 w-full">
+                <div className="mb-4 flex items-center gap-3">
+                  <div className="h-px flex-1 bg-white/10" />
+
+                  <span className="text-[10px] font-medium tracking-[0.16em] text-white/45">
+                    OR CONTINUE WITH
+                  </span>
+
+                  <div className="h-px flex-1 bg-white/10" />
+                </div>
+
+                <div className="flex w-full justify-center">
+                  <GoogleLogin
+                    onSuccess={handleGoogleSuccess}
+                    onError={() => {
+                      setStatusType("error");
+                      setStatus("Google sign-in failed. Please try again.");
+                    }}
+                    text="continue_with"
+                    shape="rectangular"
+                    theme="filled_black"
+                    size="large"
+                    width={String(googleButtonWidth)}
+                  />
+                </div>
+
+                {!isSignup && (
+                  <p className="mt-3 text-center text-[11px] text-white/40">
+                    Quick, secure access to your Scout account.
+                  </p>
+                )}
+              </div>
+
               {/* Login/signup switch */}
-              <div className="my-7 flex items-center gap-3">
+              <div className={`${isSignup ? "my-4" : "my-5"} flex items-center gap-3`}>
                 <div className="h-px flex-1 bg-white/10" />
 
                 <span className="text-[10px] tracking-[0.12em] text-white/45">
@@ -520,7 +633,9 @@ export default function AuthPage({ mode }: AuthPageProps) {
               </p>
             </div>
 
-            <p className="mt-6 text-center text-[10px] tracking-[0.08em] text-white/45">
+            <p className={`mt-4 text-center text-[10px] tracking-[0.08em] text-white/45 ${
+                isSignup ? "hidden" : ""
+              }`}>
               BUILT FOR THE CURIOUS. DESIGNED FOR DEEPER RESEARCH.
             </p>
           </motion.section>
