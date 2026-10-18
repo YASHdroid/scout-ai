@@ -19,10 +19,14 @@ Rules:
 2. Source snippets may not contain the complete article.
 3. Clearly identify missing or uncertain information.
 4. Preserve each source's exact title and URL.
+   Respect the source type supplied in the input.
+   For PDF chunks, analyze the supplied PDF passage directly.
+   Do not describe PDF passages as webpages.
 5. Copy supporting excerpts exactly from the supplied content.
 6. Do not claim a source is peer-reviewed unless established
    by the supplied information.
-7. Use only URLs supplied in the input.
+7. Use only source references supplied in the input.
+   Preserve internal scout-pdf:// references exactly.
 8. Return exactly one analysis for every supplied source.
 9. Every source analysis must use the original source URL.
 10. Return valid JSON, with no Markdown fences.
@@ -124,64 +128,96 @@ def _parse_json(response):
 
 
 def _request_json(messages):
-    """Request JSON and retry once if parsing fails."""
+    """Request valid JSON with retries for malformed model output."""
 
-    response = chat_completion(
-        messages=messages,
-        reasoning_effort="low",
-        max_completion_tokens=4096,
-        json_mode=True,
-    )
+    last_error = None
 
-    try:
-        return _parse_json(response)
+    # Try strict JSON mode first, then retry with a simpler request.
+    attempts = [
+        {
+            "messages": messages,
+            "reasoning_effort": "low",
+            "max_completion_tokens": 4096,
+            "json_mode": True,
+        },
+        {
+            "messages": messages,
+            "reasoning_effort": "low",
+            "max_completion_tokens": 4096,
+            "json_mode": False,
+        },
+    ]
 
-    except ValueError as first_error:
-        raw_response = (
-            response
-            if isinstance(response, str)
-            else json.dumps(response, ensure_ascii=False)
-        )
+    for attempt_number, params in enumerate(attempts, start=1):
+        try:
+            response = chat_completion(**params)
 
-        logger.warning(
-            "Analyzer JSON parsing failed. Retrying once: %s",
-            first_error,
-        )
+            try:
+                result = _parse_json(response)
 
-        repair_messages = messages + [
-            {
-                "role": "assistant",
-                "content": raw_response,
-            },
-            {
-                "role": "user",
-                "content": (
-                    "The previous response was invalid or incomplete. "
-                    "Return a complete, valid JSON object matching "
-                    "the original schema. Include one analysis for "
-                    "each supplied source, using the exact input URLs. "
-                    "Do not invent content. Do not use Markdown fences."
-                ),
-            },
-        ]
+                if not isinstance(result.get("source_analyses"), list):
+                    raise ValueError(
+                        "Missing or invalid source_analyses list."
+                    )
 
-        repaired_response = chat_completion(
-            messages=repair_messages,
-            reasoning_effort="low",
-            max_completion_tokens=8192,
-            json_mode=True,
-        )
+                return result
 
-        return _parse_json(repaired_response)
+            except (ValueError, json.JSONDecodeError) as error:
+                last_error = error
+                logger.warning(
+                    "Analyzer returned invalid JSON on attempt %s: %s",
+                    attempt_number,
+                    error,
+                )
 
+        except Exception as error:
+            last_error = error
+            error_text = str(error).lower()
+
+            # Retry provider-side JSON validation failures and transient
+            # errors. Don't repeatedly retry unrelated API errors.
+            retryable = (
+                "json_validate_failed" in error_text
+                or "failed to generate json" in error_text
+                or "429" in error_text
+                or "rate_limit" in error_text
+                or "500" in error_text
+                or "502" in error_text
+                or "503" in error_text
+            )
+
+            logger.warning(
+                "Analyzer API attempt %s failed: %s",
+                attempt_number,
+                error,
+            )
+
+            if not retryable:
+                raise
+
+        if attempt_number < len(attempts):
+            time.sleep(2)
+
+    raise ValueError(
+        f"Analyzer could not produce valid JSON after retries: {last_error}"
+    ) from last_error
 
 def _clean_analysis(analysis, original):
-    """Validate an analysis and preserve the original source identity."""
+    """Validate analysis while preserving the original source evidence."""
 
     if not isinstance(analysis, dict):
         raise ValueError("A source analysis is not a JSON object.")
 
-    content = (original.get("content") or "")[:800]
+    original_content = original.get("content") or ""
+    content_for_validation = original_content[:800]
+
+    source_type = (
+        original.get("source_type")
+        or original.get("type")
+        or "web"
+    )
+
+    is_pdf = source_type in {"pdf", "document"}
 
     relevance = analysis.get("relevance", "low")
 
@@ -213,9 +249,9 @@ def _clean_analysis(analysis, original):
         if not isinstance(excerpt, str):
             excerpt = ""
 
-        # Only retain an excerpt that appears verbatim
-        # in the source content sent to the model.
-        if excerpt and excerpt not in content:
+        # Keep only exact excerpts from the content supplied
+        # to the analyzer.
+        if excerpt and excerpt not in content_for_validation:
             excerpt = ""
 
         points.append({
@@ -239,9 +275,10 @@ def _clean_analysis(analysis, original):
     if not isinstance(summary, str):
         summary = ""
 
-    return {
+    cleaned = {
         "title": original.get("title", ""),
         "url": original["url"],
+        "source_type": "pdf" if is_pdf else "web",
         "relevance": relevance,
         "summary": summary.strip(),
         "key_points": points,
@@ -249,12 +286,20 @@ def _clean_analysis(analysis, original):
         "evidence_quality": quality,
     }
 
+    # Preserve the original PDF passage for local verification.
+    if is_pdf:
+        cleaned["source_content"] = original_content
+        cleaned["document_id"] = original.get("document_id")
+        cleaned["chunk_id"] = original.get("chunk_id")
+        cleaned["chunk_index"] = original.get("chunk_index")
+
+    return cleaned
+
 
 def analyze_research_sources(
     research_data: dict,
-    batch_size: int = 2,
+    batch_size: int = 1,
 ) -> dict:
-
     if batch_size < 1:
         raise ValueError("batch_size must be at least 1.")
 
@@ -272,7 +317,8 @@ def analyze_research_sources(
         batch_number = start // batch_size + 1
 
         valid_batch = [
-            source for source in batch
+            source
+            for source in batch
             if isinstance(source, dict) and source.get("url")
         ]
 
@@ -288,7 +334,15 @@ def analyze_research_sources(
             {
                 "title": source.get("title", ""),
                 "url": source["url"],
+                "source_type": (
+                    source.get("source_type")
+                    or source.get("type")
+                    or "web"
+                ),
                 "content": (source.get("content") or "")[:800],
+                "document_id": source.get("document_id"),
+                "chunk_id": source.get("chunk_id"),
+                "chunk_index": source.get("chunk_index"),
             }
             for source in valid_batch
         ]
@@ -319,7 +373,6 @@ def analyze_research_sources(
             time.sleep(1)
 
             result = _request_json(messages)
-
             analyses = result.get("source_analyses")
 
             if not isinstance(analyses, list):
@@ -338,7 +391,7 @@ def analyze_research_sources(
                 if url not in source_lookup:
                     continue
 
-                # Do not let duplicate analyses inflate the count.
+                # Avoid duplicate analyses for the same source.
                 if url in batch_analyses:
                     continue
 
@@ -347,17 +400,39 @@ def analyze_research_sources(
                     source_lookup[url],
                 )
 
-            missing_urls = (
-                set(source_lookup) - set(batch_analyses)
-            )
+            missing_urls = set(source_lookup) - set(batch_analyses)
 
-            if missing_urls:
-                raise ValueError(
-                    "Analyzer omitted source(s) from batch: "
-                    + ", ".join(sorted(missing_urls))
+            # Preserve omitted sources without inventing analysis.
+            for missing_url in missing_urls:
+                source = source_lookup[missing_url]
+
+                fallback_analysis = {
+                    "title": source.get("title", "Untitled source"),
+                    "url": missing_url,
+                    "relevance": "low",
+                    "summary": (
+                        "The analyzer omitted this source. "
+                        "Its content has not been analyzed."
+                    ),
+                    "key_points": [],
+                    "limitations": [
+                        "The analyzer omitted this source.",
+                        "No claims from this source were assessed.",
+                        "Separate verification is required before relying on it.",
+                    ],
+                    "evidence_quality": "insufficient",
+                }
+
+                cleaned_fallback = _clean_analysis(
+                    fallback_analysis,
+                    source,
                 )
+                cleaned_fallback["analysis_status"] = (
+                    "omitted_by_analyzer"
+                )
+                batch_analyses[missing_url] = cleaned_fallback
 
-            # Commit the batch only after every source is validated.
+            # Save the batch only after every source has a result.
             source_analyses.extend(batch_analyses.values())
 
             observations = result.get(
@@ -384,16 +459,17 @@ def analyze_research_sources(
                     if not valid_observation_urls:
                         continue
 
-                    confidence = observation.get(
-                        "confidence", "low"
-                    )
+                    confidence = observation.get("confidence", "low")
 
                     if confidence not in {"low", "medium", "high"}:
                         confidence = "low"
 
                     text = observation.get("observation", "")
 
-                    if not isinstance(text, str) or not text.strip():
+                    if (
+                        not isinstance(text, str)
+                        or not text.strip()
+                    ):
                         continue
 
                     cross_source_observations.append({

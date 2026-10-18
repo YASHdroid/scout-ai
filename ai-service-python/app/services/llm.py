@@ -1,13 +1,82 @@
 
+import json
 import logging
 
-from groq import Groq
-from app.core.config import GROQ_API_KEY, LLM_MODEL
+from google import genai
+from google.genai import types
+
+from app.core.config import GEMINI_API_KEY, GEMINI_MODEL
 
 
 logger = logging.getLogger(__name__)
 
-groq = Groq(api_key=GROQ_API_KEY)
+if not GEMINI_API_KEY:
+    raise RuntimeError(
+        "GEMINI_API_KEY is missing. Add it to your .env file."
+    )
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+def _convert_messages(messages):
+    """Convert OpenAI-style messages into Gemini contents."""
+
+    system_parts = []
+    contents = []
+
+    for message in messages:
+        role = message.get("role", "user")
+        content = message.get("content") or ""
+
+        # Tool-call messages need their function calls preserved.
+        if role == "system":
+            if content:
+                system_parts.append(content)
+            continue
+
+        if role == "assistant":
+            gemini_role = "model"
+        else:
+            gemini_role = "user"
+
+        if isinstance(content, str) and content.strip():
+            contents.append(
+                types.Content(
+                    role=gemini_role,
+                    parts=[types.Part.from_text(text=content)],
+                )
+            )
+
+        elif not content and role == "assistant":
+            # An assistant tool-call message can have no text.
+            pass
+
+    system_instruction = "\n\n".join(system_parts) or None
+
+    return contents, system_instruction
+
+
+def _generation_config(
+    system_instruction=None,
+    max_completion_tokens=4096,
+    json_mode=False,
+    tools=None,
+):
+    config = {
+        "max_output_tokens": max_completion_tokens,
+        "temperature": 0.2,
+    }
+
+    if system_instruction:
+        config["system_instruction"] = system_instruction
+
+    if json_mode:
+        config["response_mime_type"] = "application/json"
+
+    if tools:
+        config["tools"] = tools
+
+    return types.GenerateContentConfig(**config)
 
 
 def chat_completion(
@@ -16,37 +85,26 @@ def chat_completion(
     max_completion_tokens=4096,
     json_mode=False,
 ):
-    """Generate a completion with an explicit output-token limit."""
+    """Generate text using Gemini."""
 
-    params = {
-        "model": LLM_MODEL,
-        "messages": messages,
-        "reasoning_effort": reasoning_effort,
-        "max_completion_tokens": max_completion_tokens,
-    }
+    contents, system_instruction = _convert_messages(messages)
 
-    if json_mode:
-        params["response_format"] = {"type": "json_object"}
-        params["reasoning_format"] = "hidden"
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=contents,
+        config=_generation_config(
+            system_instruction=system_instruction,
+            max_completion_tokens=max_completion_tokens,
+            json_mode=json_mode,
+        ),
+    )
 
-    response = groq.chat.completions.create(**params)
-
-    if not response.choices:
-        raise RuntimeError("Groq returned no completion choices.")
-
-    choice = response.choices[0]
-    content = choice.message.content
-
-    if choice.finish_reason == "length":
-        logger.warning(
-            "Groq response reached the token limit (%s).",
-            max_completion_tokens,
-        )
+    content = response.text
 
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError(
-            f"Groq returned empty content. "
-            f"Finish reason: {choice.finish_reason!r}"
+            "Gemini returned an empty response. "
+            "Check the model, quota, and safety feedback."
         )
 
     return content
@@ -57,13 +115,90 @@ def chat_completion_with_tools(
     tools,
     tool_choice="auto",
 ):
-    """Generate a completion using tool calling."""
+    """Generate a Gemini response with function calling enabled."""
 
-    return groq.chat.completions.create(
-        model=LLM_MODEL,
-        messages=messages,
-        tools=tools,
-        tool_choice=tool_choice,
-        reasoning_effort="low",
-        reasoning_format="hidden",
+    contents, system_instruction = _convert_messages(messages)
+
+    declarations = []
+
+    for tool in tools or []:
+        function = tool.get("function", {})
+        name = function.get("name")
+
+        if not name:
+            continue
+
+        declarations.append(
+            types.FunctionDeclaration(
+                name=name,
+                description=function.get("description", ""),
+                parameters=function.get(
+                    "parameters",
+                    {"type": "object", "properties": {}},
+                ),
+            )
+        )
+
+    gemini_tools = (
+        [types.Tool(function_declarations=declarations)]
+        if declarations
+        else None
+    )
+
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=contents,
+        config=_generation_config(
+            system_instruction=system_instruction,
+            max_completion_tokens=4096,
+            tools=gemini_tools,
+        ),
+    )
+
+    # Keep a simple response object compatible with pipeline.py.
+    class Function:
+        def __init__(self, name, arguments):
+            self.name = name
+            self.arguments = json.dumps(arguments)
+
+    class ToolCall:
+        def __init__(self, call, index):
+            self.id = f"gemini_call_{index}"
+            self.type = "function"
+            self.function = Function(
+                call.name,
+                call.args or {},
+            )
+
+    class Message:
+        def __init__(self, text, tool_calls):
+            self.content = text
+            self.tool_calls = tool_calls
+
+    class Choice:
+        def __init__(self, message):
+            self.message = message
+            self.finish_reason = "stop"
+
+    class Response:
+        def __init__(self, message):
+            self.choices = [Choice(message)]
+
+    function_calls = []
+
+    for candidate in response.candidates or []:
+        for part in candidate.content.parts or []:
+            if part.function_call:
+                function_calls.append(part.function_call)
+
+    tool_calls = [
+        ToolCall(call, index)
+        for index, call in enumerate(function_calls, start=1)
+    ]
+
+    return Response(
+        Message(
+            text=response.text or "",
+            tool_calls=tool_calls or None,
+        )
     )

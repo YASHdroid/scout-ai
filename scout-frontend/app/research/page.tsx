@@ -28,6 +28,8 @@ import {
   LoaderCircle,
   Menu,
   FileText,
+  LogOut,
+UserRound,
 } from "lucide-react";
 
 type ResearchMode = "standard" | "deep";
@@ -598,6 +600,8 @@ export default function ResearchPage() {
     string | null
   >(null);
 
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ResearchMode>("standard");
   const [isSending, setIsSending] = useState(false);
@@ -682,6 +686,30 @@ export default function ResearchPage() {
       );
   }, [openHistoryMenuId]);
 
+    useEffect(() => {
+    if (!profileMenuOpen) return;
+
+    function handleProfileOutsideClick(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+
+      if (!target?.closest("[data-profile-menu]")) {
+        setProfileMenuOpen(false);
+      }
+    }
+
+    document.addEventListener(
+      "mousedown",
+      handleProfileOutsideClick
+    );
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        handleProfileOutsideClick
+      );
+    };
+  }, [profileMenuOpen]);
+
   const activeConversation = conversations.find(
     (conversation) => conversation.id === activeConversationId
   );
@@ -709,6 +737,14 @@ export default function ResearchPage() {
       textareaRef.current.style.height = "auto";
     }
   }
+
+function handleLogout() {
+  window.sessionStorage.removeItem("scout_token");
+  setProfileMenuOpen(false);
+  setAuthenticated(false);
+  router.replace("/login");
+}
+
 
   function renameConversation(conversationId: string) {
     const conversation = conversations.find(
@@ -808,17 +844,9 @@ export default function ResearchPage() {
       (conversation) => conversation.id === activeConversationId
     );
 
-    const isPdfResearch = Boolean(
-      pdfToUpload || existingConversation?.backendConversationId
-    );
 
-    const effectiveMode: ResearchMode = isPdfResearch
-      ? "standard"
-      : mode;
+const effectiveMode: ResearchMode = mode;
 
-    if (isPdfResearch && mode === "deep") {
-      setMode("standard");
-    }
 
     // A newly attached PDF starts a separate conversation
     // when the active conversation already has messages.
@@ -834,9 +862,11 @@ export default function ResearchPage() {
     }
 
     let backendConversationId: number | undefined = pdfToUpload
-      ? undefined
-      : existingConversation?.backendConversationId;
+  ? undefined
+  : existingConversation?.backendConversationId;
 
+let researchDocumentId: number | undefined =
+  existingConversation?.documentId;
     const userMessage: ChatMessage = {
       id: createId(),
       role: "user",
@@ -937,6 +967,9 @@ export default function ResearchPage() {
           );
         }
 
+        // Preserve the ID for Deep Research as well as PDF chat.
+        researchDocumentId = documentId;
+
         // 2. Create a conversation linked to the PDF.
         const conversationResponse = await fetch(
           `${API_BASE}/research/conversations`,
@@ -999,18 +1032,28 @@ export default function ResearchPage() {
       }
 
       // 3. Route the query to the selected research service.
-      const endpoint = backendConversationId
-        ? `${API_BASE}/research/chat`
-        : effectiveMode === "deep"
+      // Deep Research takes priority, including when a PDF is attached.
+      const endpoint =
+        effectiveMode === "deep"
           ? `${API_BASE}/research/advanced`
-          : `${API_BASE}/research`;
+          : backendConversationId
+            ? `${API_BASE}/research/chat`
+            : `${API_BASE}/research`;
 
-      const requestBody = backendConversationId
-        ? {
-            conversation_id: backendConversationId,
-            query: prompt,
-          }
-        : { query: prompt };
+      const requestBody =
+        effectiveMode === "deep"
+          ? {
+              query: prompt,
+              ...(researchDocumentId !== undefined
+                ? { document_id: researchDocumentId }
+                : {}),
+            }
+          : backendConversationId
+            ? {
+                conversation_id: backendConversationId,
+                query: prompt,
+              }
+            : { query: prompt };
 
       const response = await fetch(endpoint, {
         method: "POST",
@@ -1363,21 +1406,63 @@ export default function ResearchPage() {
             )}
           </div>
 
-          <div className="shrink-0 border-t border-white/[0.07] p-4">
-            <div className="flex items-center gap-3 rounded-xl px-2 py-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full border border-cyan-300/20 bg-cyan-300/[0.08]">
-                <Sparkles size={16} className="text-cyan-300" />
+  
+          {/* Profile menu */}
+          <div
+            data-profile-menu
+            className="relative shrink-0 border-t border-white/[0.07] p-3"
+          >
+            {profileMenuOpen && (
+              <div
+                role="menu"
+                className="absolute bottom-full left-3 right-3 z-50 mb-2 overflow-hidden rounded-xl border border-white/[0.10] bg-[#0B111A] p-1.5 shadow-2xl"
+              >
+                <div className="border-b border-white/[0.07] px-3 py-3">
+                  <p className="text-sm font-medium text-white/90">
+                    Your profile
+                  </p>
+                  <p className="mt-1 text-xs text-white/40">
+                    Manage your Scout session
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={handleLogout}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-red-300 transition hover:bg-red-400/[0.08]"
+                >
+                  <LogOut size={16} />
+                  Log out
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              aria-label="Open profile menu"
+              aria-haspopup="menu"
+              aria-expanded={profileMenuOpen}
+              onClick={() =>
+                setProfileMenuOpen((previous) => !previous)
+              }
+              className="flex w-full items-center gap-3 rounded-xl border border-transparent px-2 py-2.5 text-left transition hover:border-white/[0.08] hover:bg-white/[0.045]"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-cyan-300/20 bg-cyan-300/[0.08]">
+                <UserRound size={17} className="text-cyan-300" />
               </div>
 
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-white/85">
-                  Scout Research
+                  Profile
                 </p>
                 <p className="mt-0.5 text-[11px] text-white/40">
-                  Your research space
+                  Account options
                 </p>
               </div>
-            </div>
+
+              <MoreHorizontal size={18} className="text-white/40" />
+            </button>
           </div>
         </aside>
 
@@ -1427,6 +1512,7 @@ export default function ResearchPage() {
               </span>
             </div>
           </header>
+
 
           {/* Conversation / welcome screen */}
           <div className="min-h-0 flex-1 overflow-y-auto">

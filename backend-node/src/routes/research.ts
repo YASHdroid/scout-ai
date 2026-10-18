@@ -256,6 +256,7 @@ router.get(
 );
 
 // Deep Research
+
 router.post(
   "/advanced",
   authenticate,
@@ -265,6 +266,12 @@ router.post(
         ? req.body.query.trim()
         : "";
 
+    const rawDocumentId = req.body?.document_id;
+    const documentId =
+      rawDocumentId === undefined || rawDocumentId === null
+        ? undefined
+        : Number(rawDocumentId);
+
     if (query.length < 5 || query.length > 2000) {
       return res.status(400).json({
         success: false,
@@ -272,10 +279,25 @@ router.post(
       });
     }
 
+    if (
+      documentId !== undefined &&
+      (!Number.isInteger(documentId) || documentId <= 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: "document_id must be a positive integer.",
+      });
+    }
+
     try {
       const response = await axios.post(
         `${PYTHON_URL}/research/advanced`,
-        { query },
+        {
+          query,
+          ...(documentId !== undefined
+            ? { document_id: documentId }
+            : {}),
+        },
         {
           timeout: 0,
           headers: {

@@ -1,10 +1,15 @@
+
+import os
 import psycopg2
-from app.core.config import POSTGRES_PASSWORD
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def get_connection():
-    return psycopg2.connect(
-        host="localhost",
-        database="scout_db",
-        user="postgres",
-        password=POSTGRES_PASSWORD
-    )
+    database_url = os.getenv("DATABASE_URL")
+
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is missing from .env")
+
+    return psycopg2.connect(database_url)

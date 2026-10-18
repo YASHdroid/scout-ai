@@ -23,6 +23,12 @@ class DeepResearchRequest(BaseModel):
         description="The research question to investigate.",
     )
 
+    document_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Optional ID of the uploaded PDF.",
+    )
+
 
 @router.post("/research")
 def standard_research(request: ResearchRequest):
@@ -60,19 +66,21 @@ def standard_research(request: ResearchRequest):
 
         raise HTTPException(
             status_code=502,
-            detail="Standard Research failed. Check the AI service logs.",
+            detail=(
+                "Standard Research failed. "
+                "Check the AI service logs."
+            ),
         ) from error
 
 
 @router.post("/research/advanced")
 def advanced_research(request: DeepResearchRequest):
     """
-    Run Scout's advanced research pipeline.
-
-    Return the synthesized research report separately from
-    the evidence verification results.
+    Run Advanced Research using web sources and, optionally,
+    evidence retrieved from an uploaded PDF.
     """
     query = request.query.strip()
+    document_id = request.document_id
 
     if len(query) < 5:
         raise HTTPException(
@@ -87,9 +95,11 @@ def advanced_research(request: DeepResearchRequest):
         )
 
     try:
-        # Run the existing planning, search, analysis,
-        # synthesis, and verification pipeline.
-        result = run_advanced_research(query)
+        # Pass the optional PDF document ID into the research pipeline.
+        result = run_advanced_research(
+            query=query,
+            document_id=document_id,
+        )
 
         run_directory = Path(result["run_directory"])
 
@@ -100,13 +110,11 @@ def advanced_research(request: DeepResearchRequest):
             run_directory / "research_verification.json"
         )
 
-        # The synthesized report contains the research findings.
         if not synthesis_path.exists():
             raise RuntimeError(
                 "Research completed without a synthesis report."
             )
 
-        # Verification is returned separately from the report.
         if not verification_path.exists():
             raise RuntimeError(
                 "Research completed without a verification report."
@@ -130,15 +138,33 @@ def advanced_research(request: DeepResearchRequest):
             "query": query,
             "run_id": result["run_id"],
             "summary": {
-                "research_goal": result["research_goal"],
-                "sources_collected": result["sources_collected"],
-                "sources_analyzed": result["sources_analyzed"],
-                "key_findings": result["key_findings"],
-                "comparisons": result["comparisons"],
-                "candidate_research_gaps": (
-                    result["candidate_research_gaps"]
+                "research_goal": result.get(
+                    "research_goal", ""
                 ),
-                "verification": result["verification_summary"],
+                "sources_collected": result.get(
+                    "sources_collected", 0
+                ),
+                "web_sources_included": result.get(
+                    "web_sources_included", 0
+                ),
+                "pdf_sources_included": result.get(
+                    "pdf_sources_included", 0
+                ),
+                "sources_analyzed": result.get(
+                    "sources_analyzed", 0
+                ),
+                "key_findings": result.get(
+                    "key_findings", 0
+                ),
+                "comparisons": result.get(
+                    "comparisons", 0
+                ),
+                "candidate_research_gaps": result.get(
+                    "candidate_research_gaps", 0
+                ),
+                "verification": result.get(
+                    "verification_summary", {}
+                ),
             },
             "report": synthesis_report,
             "verification": verified_report,
