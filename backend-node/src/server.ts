@@ -16,11 +16,11 @@ app.use(
 
 app.use(express.json());
 
-const PORT = 3001;
+const PORT = Number(process.env.PORT) || 3001;
 
 app.use("/api/auth", authRouter);
 app.use("/api/research", researchRouter);
 
-app.listen(PORT, () => {
-  console.log(`Node server running on http://localhost:${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Node server running on port ${PORT}`);
 });
