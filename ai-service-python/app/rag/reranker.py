@@ -1,9 +1,14 @@
+
+from functools import lru_cache
 from sentence_transformers import CrossEncoder
 
 
-model = CrossEncoder(
-    "cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
+@lru_cache(maxsize=1)
+def get_reranker_model():
+    """Load the reranker only when it is first needed."""
+    return CrossEncoder(
+        "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
 
 
 def rerank_chunks(
@@ -11,17 +16,15 @@ def rerank_chunks(
     chunks: list[dict],
     top_k: int = 5
 ):
-
     if not chunks:
         return []
 
     pairs = [
-        (
-            query,
-            chunk["content"]
-        )
+        (query, chunk["content"])
         for chunk in chunks
     ]
+
+    model = get_reranker_model()
 
     scores = model.predict(
         pairs,
@@ -30,15 +33,9 @@ def rerank_chunks(
 
     scored_chunks = []
 
-    for chunk, score in zip(
-        chunks,
-        scores
-    ):
-
+    for chunk, score in zip(chunks, scores):
         item = dict(chunk)
-
         item["rerank_score"] = float(score)
-
         scored_chunks.append(item)
 
     scored_chunks.sort(
