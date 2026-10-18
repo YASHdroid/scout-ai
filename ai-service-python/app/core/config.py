@@ -4,11 +4,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL",
@@ -17,12 +17,11 @@ EMBEDDING_MODEL = os.getenv(
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 
-
-if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is missing")
+if not GROQ_API_KEY:
+    raise RuntimeError("GROQ_API_KEY is missing")
 
 if not TAVILY_API_KEY:
     raise RuntimeError("TAVILY_API_KEY is missing")
 
-if not POSTGRES_PASSWORD:
-    raise RuntimeError("POSTGRES_PASSWORD is missing")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is missing")

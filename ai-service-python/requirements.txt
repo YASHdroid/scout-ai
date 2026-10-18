@@ -1,3 +1,4 @@
+
 fastapi
 uvicorn
 pydantic
@@ -5,6 +6,7 @@ python-dotenv
 psycopg2-binary
 sentence-transformers
 groq
+openai
 tavily-python
 pymupdf
 python-multipart
