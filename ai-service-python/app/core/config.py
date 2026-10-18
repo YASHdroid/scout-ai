@@ -1,4 +1,3 @@
-
 import os
 from dotenv import load_dotenv
 
@@ -12,7 +11,7 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL",
-    "all-MiniLM-L6-v2",
+    "sentence-transformers/all-MiniLM-L6-v2",
 )
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")

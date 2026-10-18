@@ -1,13 +1,13 @@
-
 from functools import lru_cache
-from sentence_transformers import CrossEncoder
+
+from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 
 @lru_cache(maxsize=1)
 def get_reranker_model():
     """Load the reranker only when it is first needed."""
-    return CrossEncoder(
-        "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    return TextCrossEncoder(
+        model_name="Xenova/ms-marco-MiniLM-L-6-v2"
     )
 
 
@@ -19,17 +19,10 @@ def rerank_chunks(
     if not chunks:
         return []
 
-    pairs = [
-        (query, chunk["content"])
-        for chunk in chunks
-    ]
+    documents = [chunk["content"] for chunk in chunks]
 
     model = get_reranker_model()
-
-    scores = model.predict(
-        pairs,
-        batch_size=16
-    )
+    scores = list(model.rerank(query, documents))
 
     scored_chunks = []
 

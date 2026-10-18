@@ -1,10 +1,9 @@
-
 fastapi
 uvicorn
 pydantic
 python-dotenv
 psycopg2-binary
-sentence-transformers
+fastembed
 groq
 openai
 tavily-python

@@ -1,21 +1,22 @@
-
 from functools import lru_cache
 
-from sentence_transformers import SentenceTransformer
+import numpy as np
+from fastembed import TextEmbedding
+
 from app.core.config import EMBEDDING_MODEL
 
 
 @lru_cache(maxsize=1)
 def get_embedding_model():
     """Load the embedding model only when first needed."""
-    return SentenceTransformer(EMBEDDING_MODEL)
+    return TextEmbedding(model_name=EMBEDDING_MODEL)
 
 
 def create_embedding(text: str):
     model = get_embedding_model()
-    return model.encode(text)
+    return next(iter(model.embed([text])))
 
 
 def create_embeddings(texts: list[str]):
     model = get_embedding_model()
-    return model.encode(texts)
+    return np.array(list(model.embed(texts)))
