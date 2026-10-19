@@ -1,109 +1,126 @@
+
 from app.core.database import get_connection
 
 
-def create_conversation(document_id: int):
-
+def create_conversation(document_id: int, user_id: int):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO conversations
-        (document_id)
-        VALUES (%s)
-        RETURNING id
-        """,
-        (document_id,)
-    )
+    try:
+        # Only allow a user to create a conversation for their own PDF.
+        cursor.execute(
+            """
+            SELECT id
+            FROM documents
+            WHERE id = %s AND user_id = %s
+            """,
+            (document_id, user_id),
+        )
 
-    conversation_id = cursor.fetchone()[0]
+        if cursor.fetchone() is None:
+            return None
 
-    conn.commit()
+        cursor.execute(
+            """
+            INSERT INTO conversations (document_id, user_id)
+            VALUES (%s, %s)
+            RETURNING id
+            """,
+            (document_id, user_id),
+        )
 
-    cursor.close()
-    conn.close()
+        conversation_id = cursor.fetchone()[0]
+        conn.commit()
+        return conversation_id
 
-    return conversation_id
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        conn.close()
 
 
-def get_conversation_document(conversation_id: int):
-
+def get_conversation_document(
+    conversation_id: int,
+    user_id: int,
+):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT document_id
-        FROM conversations
-        WHERE id = %s
-        """,
-        (conversation_id,)
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT document_id
+            FROM conversations
+            WHERE id = %s AND user_id = %s
+            """,
+            (conversation_id, user_id),
+        )
 
-    row = cursor.fetchone()
+        row = cursor.fetchone()
 
-    cursor.close()
-    conn.close()
+        if row is None:
+            return None, False
 
-    if row is None:
-        return None, False
+        return row[0], True
 
-    return row[0], True
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def save_message(
     conversation_id: int,
     role: str,
-    content: str
+    content: str,
 ):
-
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        INSERT INTO messages
-        (conversation_id, role, content)
-        VALUES (%s, %s, %s)
-        """,
-        (
-            conversation_id,
-            role,
-            content
+    try:
+        cursor.execute(
+            """
+            INSERT INTO messages (conversation_id, role, content)
+            VALUES (%s, %s, %s)
+            """,
+            (conversation_id, role, content),
         )
-    )
 
-    conn.commit()
+        conn.commit()
 
-    cursor.close()
-    conn.close()
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def get_recent_messages(
     conversation_id: int,
-    limit: int = 10
+    limit: int = 10,
 ):
-
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        """
-        SELECT role, content
-        FROM messages
-        WHERE conversation_id = %s
-        ORDER BY id DESC
-        LIMIT %s
-        """,
-        (
-            conversation_id,
-            limit
+    try:
+        cursor.execute(
+            """
+            SELECT role, content
+            FROM messages
+            WHERE conversation_id = %s
+            ORDER BY id DESC
+            LIMIT %s
+            """,
+            (conversation_id, limit),
         )
-    )
 
-    rows = cursor.fetchall()
+        rows = cursor.fetchall()
+        return list(reversed(rows))
 
-    cursor.close()
-    conn.close()
-
-    return list(reversed(rows))
+    finally:
+        cursor.close()
+        conn.close()

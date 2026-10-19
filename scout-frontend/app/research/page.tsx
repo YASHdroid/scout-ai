@@ -56,9 +56,35 @@ type Conversation = {
   documentId?: number;
   backendConversationId?: number;
 };
-
 const HISTORY_KEY = "scout_research_history_v1";
 
+function getUserHistoryKey(): string | null {
+  if (typeof window === "undefined") return null;
+
+  const token = window.sessionStorage.getItem("scout_token");
+  if (!token) return null;
+
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+
+    const base64 = payload
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+
+    const decoded = JSON.parse(
+      window.atob(base64)
+    ) as { id?: number | string };
+
+    if (decoded.id === undefined || decoded.id === null) {
+      return null;
+    }
+
+    return `${HISTORY_KEY}_user_${decoded.id}`;
+  } catch {
+    return null;
+  }
+}
 const API_BASE = (
   process.env.NEXT_PUBLIC_API_URL ||
   "http://localhost:3001/api"
@@ -403,16 +429,20 @@ function tryParseJson(value: string): unknown {
   }
 }
 
+type DeepReport = Record<string, unknown> & {
+  research_overview: string;
+  key_findings: unknown[];
+};
+
 function isDeepReport(
   record: Record<string, unknown> | undefined | null
-): record is Record<string, unknown> {
+): record is DeepReport {
   return Boolean(
     record &&
       typeof record.research_overview === "string" &&
       Array.isArray(record.key_findings)
   );
 }
-
 function getAnswer(value: unknown): string {
   let root = getPayload(value);
 
@@ -633,9 +663,21 @@ export default function ResearchPage() {
   }, [router]);
 
   // Load local conversation history.
+  // Load conversation history for the logged-in account.
   useEffect(() => {
+    const userHistoryKey = getUserHistoryKey();
+
+    setConversations([]);
+    setActiveConversationId(null);
+    setHistoryReady(false);
+
+    if (!userHistoryKey) {
+      setHistoryReady(true);
+      return;
+    }
+
     try {
-      const saved = window.localStorage.getItem(HISTORY_KEY);
+      const saved = window.localStorage.getItem(userHistoryKey);
 
       if (saved) {
         const parsed: unknown = JSON.parse(saved);
@@ -651,6 +693,22 @@ export default function ResearchPage() {
     }
   }, []);
 
+  // Save history only under the current account's key.
+  useEffect(() => {
+    if (!historyReady) return;
+
+    const userHistoryKey = getUserHistoryKey();
+    if (!userHistoryKey) return;
+
+    try {
+      window.localStorage.setItem(
+        userHistoryKey,
+        JSON.stringify(conversations)
+      );
+    } catch (error) {
+      console.error("Could not save Scout history:", error);
+    }
+  }, [conversations, historyReady]);
   // Save conversation history in this browser.
   useEffect(() => {
     if (!historyReady) return;

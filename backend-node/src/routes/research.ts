@@ -14,6 +14,18 @@ const router = Router();
 const PYTHON_URL =
   process.env.PYTHON_URL || "http://127.0.0.1:8000";
 
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET;
+
+function internalHeaders() {
+  if (!INTERNAL_API_SECRET) {
+    throw new Error("INTERNAL_API_SECRET is not configured.");
+  }
+
+  return {
+    "X-Internal-Secret": INTERNAL_API_SECRET,
+  };
+}
+
 const pdfUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -49,29 +61,15 @@ router.post(
       const response = await axios.post(
         `${PYTHON_URL}/research`,
         { query },
-        { timeout: 180000 }
+        {
+          timeout: 180000,
+          headers: internalHeaders(),
+        }
       );
 
       return res.status(200).json(response.data);
     } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        console.error("Standard Research error:", error.message);
-
-        const status = error.response?.status;
-        const detail = error.response?.data?.detail;
-
-        if (status && status >= 400 && status < 500) {
-          return res.status(status).json({
-            success: false,
-            error:
-              typeof detail === "string"
-                ? detail
-                : "The AI service rejected the request.",
-          });
-        }
-      } else {
-        console.error("Standard Research error:", error);
-      }
+      console.error("Standard Research error:", error);
 
       return res.status(502).json({
         success: false,
@@ -87,6 +85,13 @@ router.post(
   authenticate,
   pdfUpload.single("file"),
   async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Authentication required.",
+      });
+    }
+
     if (!req.file) {
       return res.status(400).json({
         success: false,
@@ -97,6 +102,8 @@ router.post(
     try {
       const form = new FormData();
 
+      form.append("user_id", String(req.user.id));
+
       form.append("file", req.file.buffer, {
         filename: req.file.originalname,
         contentType: "application/pdf",
@@ -106,7 +113,10 @@ router.post(
         `${PYTHON_URL}/documents`,
         form,
         {
-          headers: form.getHeaders(),
+          headers: {
+            ...form.getHeaders(),
+            ...internalHeaders(),
+          },
           timeout: 300000,
           maxBodyLength: Infinity,
           maxContentLength: Infinity,
@@ -118,21 +128,12 @@ router.post(
         ...response.data,
       });
     } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        console.error("PDF upload error:", error.message);
-
-        return res.status(502).json({
-          success: false,
-          error:
-            "PDF upload or indexing failed. Check the Python service logs.",
-        });
-      }
-
       console.error("PDF upload error:", error);
 
-      return res.status(500).json({
+      return res.status(502).json({
         success: false,
-        error: "Could not process the PDF.",
+        error:
+          "PDF upload or indexing failed. Check the Python service logs.",
       });
     }
   }
@@ -143,6 +144,13 @@ router.post(
   "/conversations",
   authenticate,
   async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Authentication required.",
+      });
+    }
+
     const documentId = Number(req.body?.document_id);
 
     if (!Number.isInteger(documentId) || documentId <= 0) {
@@ -155,8 +163,14 @@ router.post(
     try {
       const response = await axios.post(
         `${PYTHON_URL}/conversations`,
-        { document_id: documentId },
-        { timeout: 15000 }
+        {
+          document_id: documentId,
+          user_id: req.user.id,
+        },
+        {
+          timeout: 15000,
+          headers: internalHeaders(),
+        }
       );
 
       return res.status(201).json({
@@ -179,6 +193,13 @@ router.post(
   "/chat",
   authenticate,
   async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Authentication required.",
+      });
+    }
+
     const conversationId = Number(req.body?.conversation_id);
     const query =
       typeof req.body?.query === "string"
@@ -205,8 +226,12 @@ router.post(
         {
           conversation_id: conversationId,
           query,
+          user_id: req.user.id,
         },
-        { timeout: 180000 }
+        {
+          timeout: 180000,
+          headers: internalHeaders(),
+        }
       );
 
       if (response.data?.error) {
@@ -236,7 +261,10 @@ router.get(
     try {
       const response = await axios.get(
         `${PYTHON_URL}/health`,
-        { timeout: 5000 }
+        {
+          timeout: 5000,
+          headers: internalHeaders(),
+        }
       );
 
       return res.json({
@@ -244,7 +272,7 @@ router.get(
         node: "running",
         python: response.data,
       });
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Research health check failed:", error);
 
       return res.status(502).json({
@@ -256,11 +284,17 @@ router.get(
 );
 
 // Deep Research
-
 router.post(
   "/advanced",
   authenticate,
   async (req: AuthRequest, res: Response) => {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        error: "Authentication required.",
+      });
+    }
+
     const query =
       typeof req.body?.query === "string"
         ? req.body.query.trim()
@@ -294,6 +328,7 @@ router.post(
         `${PYTHON_URL}/research/advanced`,
         {
           query,
+          user_id: req.user.id,
           ...(documentId !== undefined
             ? { document_id: documentId }
             : {}),
@@ -302,6 +337,7 @@ router.post(
           timeout: 0,
           headers: {
             "Content-Type": "application/json",
+            ...internalHeaders(),
           },
         }
       );

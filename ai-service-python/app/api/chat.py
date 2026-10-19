@@ -1,41 +1,49 @@
-from fastapi import APIRouter
 
-from app.models.schemas import ChatRequest
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
+from app.core.internal_auth import verify_internal_service
 from app.services.conversation_service import (
     get_conversation_document,
     get_recent_messages,
-    save_message
+    save_message,
 )
-
 from app.rag.pipeline import run_chat
-
 
 router = APIRouter()
 
 
-@router.post("/chat")
-async def chat(request: ChatRequest):
+class OwnedChatRequest(BaseModel):
+    conversation_id: int = Field(gt=0)
+    query: str = Field(min_length=1, max_length=2000)
+    user_id: int = Field(gt=0)
 
+
+@router.post("/chat")
+def chat(
+    request: OwnedChatRequest,
+    _: None = Depends(verify_internal_service),
+):
     document_id, conversation_exists = get_conversation_document(
-        request.conversation_id
+        request.conversation_id,
+        request.user_id,
     )
 
     if not conversation_exists:
-
-        return {
-            "error": "Conversation not found"
-        }
+        raise HTTPException(
+            status_code=404,
+            detail="Conversation not found.",
+        )
 
     save_message(
         request.conversation_id,
         "user",
-        request.query
+        request.query,
     )
 
     history = get_recent_messages(
         request.conversation_id,
-        limit=10
+        limit=10,
     )
 
     previous_history = history[:-1]
@@ -43,18 +51,18 @@ async def chat(request: ChatRequest):
     answer, sources = run_chat(
         query=request.query,
         document_id=document_id,
-        history=previous_history
+        history=previous_history,
     )
 
     save_message(
         request.conversation_id,
         "assistant",
-        answer
+        answer,
     )
 
     return {
         "conversation_id": request.conversation_id,
         "query": request.query,
         "answer": answer,
-        "sources": sources
+        "sources": sources,
     }
