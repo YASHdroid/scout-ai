@@ -8,9 +8,11 @@ const app = express();
 
 app.use(
   cors({
-    origin: "http://localhost:3000",
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    origin: [
+      "http://localhost:3000",
+      "https://scout-ai-umber.vercel.app",
+    ],
+    credentials: true,
   })
 );
 
