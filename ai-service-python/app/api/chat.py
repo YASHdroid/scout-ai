@@ -9,6 +9,7 @@ from app.services.conversation_service import (
     save_message,
 )
 from app.rag.pipeline import run_chat
+from app.services.llm import ToolCallGenerationError
 
 router = APIRouter()
 
@@ -48,11 +49,20 @@ def chat(
 
     previous_history = history[:-1]
 
-    answer, sources = run_chat(
-        query=request.query,
-        document_id=document_id,
-        history=previous_history,
-    )
+    try:
+        answer, sources = run_chat(
+            query=request.query,
+            document_id=document_id,
+            history=previous_history,
+        )
+    except ToolCallGenerationError:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "The AI model failed to produce a valid search request. "
+                "Please try again."
+            ),
+        ) from None
 
     save_message(
         request.conversation_id,

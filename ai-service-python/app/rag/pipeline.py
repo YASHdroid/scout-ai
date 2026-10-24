@@ -1,13 +1,22 @@
 
 import json
+import logging
 
 from app.rag.retriever import retrieve_chunks
 from app.rag.reranker import rerank_chunks
 from app.services.search import web_search
+from app.rag.tool_args import InvalidToolArguments, parse_tool_arguments
 from app.services.llm import (
+    ToolCallGenerationError,
     chat_completion,
     chat_completion_with_tools,
 )
+
+logger = logging.getLogger(__name__)
+
+# Invalid tool calls tolerated per request. The first one is returned to the
+# model as an error so it can correct itself; reaching this count aborts.
+MAX_INVALID_TOOL_CALLS = 2
 
 
 def document_search(
@@ -306,10 +315,12 @@ def execute_tool(
                 )
             }
 
-        query = arguments.get("query", "").strip()
+        query = arguments.get("query")
 
-        if not query:
-            return []
+        if not isinstance(query, str) or not query.strip():
+            return {"error": "A non-empty 'query' string is required."}
+
+        query = query.strip()
 
         results = web_search(
             query=query,
@@ -339,10 +350,12 @@ def execute_tool(
                 )
             }
 
-        query = arguments.get("query", "").strip()
+        query = arguments.get("query")
 
-        if not query:
-            return []
+        if not isinstance(query, str) or not query.strip():
+            return {"error": "A non-empty 'query' string is required."}
+
+        query = query.strip()
 
         results = targeted_document_search(
             query=query,
@@ -506,9 +519,14 @@ def run_agent(
 
     all_sources = []
     tool_call_count = 0
+    invalid_tool_call_count = 0
     max_tool_calls = 10
 
-    
+    exposed_tools = {
+        tool["function"]["name"]: tool["function"]["parameters"]
+        for tool in tools
+    }
+
     if explicit_document_request and document_available:
         document_results = targeted_document_search(
             query=query,
@@ -542,6 +560,7 @@ def run_agent(
         )
 
     while tool_call_count < max_tool_calls:
+        # May raise ToolCallGenerationError after bounded retries.
         response = chat_completion_with_tools(
             messages=messages,
             tools=tools,
@@ -558,68 +577,113 @@ def run_agent(
                 _unique_sources(all_sources),
             )
 
-        assistant_tool_calls = []
+        # Validate every call BEFORE building history, so malformed
+        # arguments are never echoed back to the provider.
+        validated = []
 
         for tool_call in assistant_message.tool_calls:
-            assistant_tool_calls.append(
-                {
-                    "id": tool_call.id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_call.function.name,
-                        "arguments": tool_call.function.arguments,
-                    },
-                }
-            )
+            tool_name = tool_call.function.name
+
+            try:
+                if tool_name not in exposed_tools:
+                    raise InvalidToolArguments(
+                        f"Tool '{tool_name}' is not available."
+                    )
+
+                arguments = parse_tool_arguments(
+                    tool_call.function.arguments,
+                    exposed_tools[tool_name],
+                )
+                error = None
+            except InvalidToolArguments as exc:
+                arguments = None
+                error = str(exc)
+
+            validated.append((tool_call, arguments, error))
 
         messages.append(
             {
                 "role": "assistant",
                 "content": assistant_message.content,
-                "tool_calls": assistant_tool_calls,
+                "tool_calls": [
+                    {
+                        "id": tool_call.id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": (
+                                tool_call.function.arguments
+                                if error is None
+                                else "{}"
+                            ),
+                        },
+                    }
+                    for tool_call, _, error in validated
+                ],
             }
         )
 
-        for tool_call in assistant_message.tool_calls:
-            if tool_call_count >= max_tool_calls:
-                break
-
+        # Every tool_call id gets exactly one tool reply.
+        for tool_call, arguments, error in validated:
             tool_name = tool_call.function.name
 
-            try:
-                arguments = json.loads(
-                    tool_call.function.arguments or "{}"
+            if error is not None:
+                invalid_tool_call_count += 1
+                tool_call_count += 1
+
+                logger.warning(
+                    "Rejected tool call '%s': %s (invalid=%d/%d)",
+                    tool_name,
+                    error,
+                    invalid_tool_call_count,
+                    MAX_INVALID_TOOL_CALLS,
                 )
-            except (json.JSONDecodeError, TypeError):
-                arguments = {}
 
-            result = execute_tool(
-                tool_name=tool_name,
-                arguments=arguments,
-                document_id=document_id,
-                document_only=document_only,
-            )
+                result = {
+                    "error": (
+                        f"{error} The tool was not executed. "
+                        "Call it again with valid JSON arguments "
+                        "that match the schema."
+                    )
+                }
+            elif tool_call_count >= max_tool_calls:
+                result = {
+                    "error": (
+                        "Tool call limit reached; this call was "
+                        "not executed."
+                    )
+                }
+            else:
+                result = execute_tool(
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    document_id=document_id,
+                    document_only=document_only,
+                )
 
-            tool_call_count += 1
+                tool_call_count += 1
 
-            if isinstance(result, list):
-                all_sources.extend(result)
-
-            tool_content = json.dumps(
-                result,
-                ensure_ascii=False,
-                default=str,
-            )
+                if isinstance(result, list):
+                    all_sources.extend(result)
 
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": tool_content,
+                    "content": json.dumps(
+                        result,
+                        ensure_ascii=False,
+                        default=str,
+                    ),
                 }
             )
 
-   
+        if invalid_tool_call_count >= MAX_INVALID_TOOL_CALLS:
+            raise ToolCallGenerationError(
+                "The language model repeatedly produced invalid tool "
+                "arguments. Please try again."
+            )
+
     final_response = chat_completion(
         messages=messages,
         reasoning_effort="low",

@@ -11,6 +11,7 @@ from app.core.internal_auth import verify_internal_service
 from app.models.schemas import ResearchRequest
 from app.rag.pipeline import run_chat
 from app.rag.advanced_research import run_advanced_research
+from app.services.llm import ToolCallGenerationError
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,15 @@ def standard_research(
             "sources": sources,
         }
 
+    except ToolCallGenerationError as error:
+        logger.warning("Standard Research aborted: %s", error)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "The AI model failed to produce a valid search request. "
+                "Please try again."
+            ),
+        ) from None
     except Exception as error:
         logger.exception("Standard Research failed.")
         raise HTTPException(
